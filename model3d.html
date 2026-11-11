@@ -1,0 +1,28 @@
+<style>
+div div {
+  width: 120px;
+  height: 70px;
+  position: absolute;
+}
+div div:first-child {
+  background: green;
+}
+div div:last-child {
+  background: blue;
+  transform: translateX(50%) rotateX(90deg);
+}
+input {
+  position: absolute;
+  top: 100px;
+  width: 180px;
+}
+</style>
+<div style="overflow:visible;transform-style:preserve-3d; transform: rotateX(20deg); transform-origin: 0 35px;">
+  <div></div>
+  <div></div>
+</div>
+<input type=range >
+<script>
+const L3D = document.querySelector("div");
+document.querySelector("input").addEventListener('input', ev => L3D.style.transform = `rotateX(${3.6*ev.target.value}deg)`);
+</script>
