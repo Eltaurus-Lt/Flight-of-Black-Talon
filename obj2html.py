@@ -2,13 +2,12 @@ from pathlib import Path
 import math
 
 OBJ_FILE = "flyer.obj"
-HTML_FILE = "model.html"
+OUT_FILE = "model.html"
 
 SCALE = 100.0
-FACE_CLASS_PREFIX = "f"
 
 
-def vsub(a, b):
+def sub(a, b):
     return (
         a[0] - b[0],
         a[1] - b[1],
@@ -16,15 +15,15 @@ def vsub(a, b):
     )
 
 
-def vdot(a, b):
+def dot(a, b):
     return (
-        a[0] * b[0] +
-        a[1] * b[1] +
-        a[2] * b[2]
+        a[0] * b[0]
+        + a[1] * b[1]
+        + a[2] * b[2]
     )
 
 
-def vcross(a, b):
+def cross(a, b):
     return (
         a[1] * b[2] - a[2] * b[1],
         a[2] * b[0] - a[0] * b[2],
@@ -32,12 +31,12 @@ def vcross(a, b):
     )
 
 
-def vlen(v):
-    return math.sqrt(vdot(v, v))
+def length(v):
+    return math.sqrt(dot(v, v))
 
 
-def vnorm(v):
-    l = vlen(v)
+def normalize(v):
+    l = length(v)
 
     if l == 0:
         return (0.0, 0.0, 0.0)
@@ -62,11 +61,13 @@ def parse_obj(text):
         if line.startswith("v "):
             _, x, y, z = line.split()[:4]
 
-            vertices.append((
-                float(x),
-                float(y),
-                float(z)
-            ))
+            vertices.append(
+                (
+                    float(x),
+                    float(y),
+                    float(z),
+                )
+            )
 
         elif line.startswith("f "):
             face = []
@@ -82,23 +83,21 @@ def parse_obj(text):
     return vertices, faces
 
 
-def build_frame(points):
+def build_basis(points):
     p0 = points[0]
-    p1 = points[1]
-    p2 = points[2]
 
-    ux = vnorm(
-        vsub(p1, p0)
+    ux = normalize(
+        sub(points[1], p0)
     )
 
-    nz = vnorm(
-        vcross(
-            vsub(p1, p0),
-            vsub(p2, p0)
+    nz = normalize(
+        cross(
+            sub(points[1], p0),
+            sub(points[2], p0),
         )
     )
 
-    vy = vcross(nz, ux)
+    vy = cross(nz, ux)
 
     return p0, ux, vy, nz
 
@@ -107,12 +106,14 @@ def project(points, origin, ux, vy):
     result = []
 
     for p in points:
-        d = vsub(p, origin)
+        d = sub(p, origin)
 
-        result.append((
-            vdot(d, ux) * SCALE,
-            vdot(d, vy) * SCALE
-        ))
+        result.append(
+            (
+                dot(d, ux) * SCALE,
+                dot(d, vy) * SCALE,
+            )
+        )
 
     return result
 
@@ -122,166 +123,143 @@ def matrix3d(origin, ux, vy, nz):
     oy = -origin[1] * SCALE
     oz = origin[2] * SCALE
 
-    values = [
-        ux[0], -ux[1], ux[2], 0,
-        vy[0], -vy[1], vy[2], 0,
-        nz[0], -nz[1], nz[2], 0,
-        ox, oy, oz, 1
-    ]
-
     return ",".join(
         f"{v:.12g}"
-        for v in values
+        for v in (
+            ux[0], -ux[1], ux[2], 0,
+            vy[0], -vy[1], vy[2], 0,
+            nz[0], -nz[1], nz[2], 0,
+            ox, oy, oz, 1,
+        )
     )
 
 
-def is_y_symmetric(points, eps=1e-5):
-    pts = [
-        (round(x, 5), round(y, 5))
-        for x, y in points
-    ]
+def build_face(points3d, idx):
+    origin, ux, vy, nz = build_basis(points3d)
 
-    s = set(pts)
-
-    for x, y in pts:
-        if (-x, y) not in s:
-            return False
-
-    return True
-
-
-def make_face(points3d, index):
-    origin, ux, vy, nz = build_frame(points3d)
-
-    pts = project(
+    local = project(
         points3d,
         origin,
         ux,
-        vy
+        vy,
     )
 
-    symmetric = is_y_symmetric(pts)
+    min_x = min(x for x, _ in local)
+    max_x = max(x for x, _ in local)
 
-    if symmetric:
-        max_x = max(abs(x) for x, _ in pts) or 1
-        min_y = min(y for _, y in pts)
-        max_y = max(y for _, y in pts)
+    min_y = min(y for _, y in local)
+    max_y = max(y for _, y in local)
 
-        local = [
-            (
-                x / max_x * 50 + 50,
-                (y - min_y) / max(max_y - min_y, 1e-9) * 100
-            )
-            for x, y in pts
-        ]
+    width = max(max_x - min_x, 1.0)
+    height = max(max_y - min_y, 1.0)
 
-        width = 2*max_x
-        height = max(max_y - min_y, 1)
+    clip_points = [
+        (
+            x - min_x,
+            y - min_y,
+        )
+        for x, y in local
+    ]
 
-    else:
-        min_x = min(x for x, _ in pts)
-        max_x = max(x for x, _ in pts)
+    corrected_origin = (
+        origin[0]
+        + ux[0] * (min_x / SCALE)
+        + vy[0] * (min_y / SCALE),
 
-        min_y = min(y for _, y in pts)
-        max_y = max(y for _, y in pts)
+        origin[1]
+        + ux[1] * (min_x / SCALE)
+        + vy[1] * (min_y / SCALE),
 
-        width = max(max_x - min_x, 1)
-        height = max(max_y - min_y, 1)
-
-        local = [
-            (
-                (x - min_x) / width * 100,
-                (y - min_y) / height * 100
-            )
-            for x, y in pts
-        ]
+        origin[2]
+        + ux[2] * (min_x / SCALE)
+        + vy[2] * (min_y / SCALE),
+    )
 
     clip = ",".join(
-        f"{x:.4f}% {y:.4f}%"
-        for x, y in local
+        f"{x:.6f}px {y:.6f}px"
+        for x, y in clip_points
     )
 
-    cls = f"{FACE_CLASS_PREFIX}{index}"
+    cls = f"f{idx}"
 
     css = (
         f".{cls}{{"
         f"width:{width:.6f}px;"
         f"height:{height:.6f}px;"
         f"clip-path:polygon({clip});"
-        f"transform:matrix3d({matrix3d(origin, ux, vy, nz)});"
-        f"}}"
+        f"transform:matrix3d("
+        f"{matrix3d(corrected_origin, ux, vy, nz)}"
+        f");"
+        f"}}\n"
     )
 
-    html = f'<svg class="{cls}"></svg>'
+    html = f'<svg class="{cls}"></svg>\n'
 
     return css, html
 
 
-def build_html(vertices, faces):
-    css_rules = [
-        ".obj{position:relative;"
-        "transform-style:preserve-3d;"
-        "translate: 200px 100px;"
-        "scale: 20%;"
-        "transform: rotate3d(1, 0, 0, -40deg);"
-        "}",
-        ".obj>svg{"
-        "position:absolute;"
-        "left:0;"
-        "top:0;"
-        "overflow:visible;"
-        "transform-origin:0 0;"
-        "background:currentColor;"
-        "}",
-        ".obj>svg:is(:nth-child(16),:nth-child(17),:nth-child(47),:nth-child(48),:nth-child(58)) {"
-        "background:#06d8 !important;"        
+def build_output(vertices, faces):
+    css = [
+        ".obj{position:relative;\n"
+        "transform-style:preserve-3d;\n"
+        "translate: 140px 140px;\n"
+        "scale: 20%;\n"
+        "transform: rotate3d(1, 0, 0, -40deg);\n"
+        "}\n\n",
+
+        ".obj>svg{\n"
+        "position:absolute;\n"
+        "left:0;\n"
+        "top:0;\n"
+        "transform-origin:0 0;\n"
+        "transform-style:preserve-3d;\n"
+        f"background:black;\n"
+        "overflow:visible;\n"
+        "}\n",
+        ".obj>svg:is(:nth-child(17),:nth-child(18),:nth-child(48),:nth-child(49),:nth-child(59)) {\n"
+        "background:#06d8 !important;\n"        
         "}",
     ]
 
-    elements = []
+    body = []
 
     for i, face in enumerate(faces):
-        points3d = [
-            vertices[idx]
-            for idx in face
-        ]
+        points = [vertices[j] for j in face]
 
-        css, html = make_face(
-            points3d,
+        rule, element = build_face(
+            points,
             i
         )
 
-        css_rules.append(css)
-        elements.append(html)
+        css.append(rule)
+        body.append(element)
 
     return (
         "<style>"
-        + "".join(css_rules)
+        + "".join(css)
         + "</style>"
-        + '<div class="obj">'
-        + "".join(elements)
-        + "</div>"
+        + '<div class="obj">\n'
+        + "".join(body)
+        + "\n</div>"
     )
 
 
 def main():
-    vertices, faces = parse_obj(
-        Path(OBJ_FILE).read_text(
-            encoding="utf-8"
-        )
+    text = Path(OBJ_FILE).read_text(
+        encoding="utf-8"
     )
 
-    html = build_html(
+    vertices, faces = parse_obj(text)
+
+    output = build_output(
         vertices,
         faces
     )
 
-    Path(HTML_FILE).write_text(
-        html,
+    Path(OUT_FILE).write_text(
+        output,
         encoding="utf-8"
     )
-
-    print(f"saved {HTML_FILE}")
 
 
 if __name__ == "__main__":
